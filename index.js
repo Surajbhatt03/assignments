@@ -11,17 +11,33 @@ const db = mysql.createConnection({
   host: process.env.DB_HOST, 
   user: process.env.DB_USER,    
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
+  database: process.env.DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-// Check database connection
+// Reconnect on error
 db.connect(err => {
-  if (err) {
-    console.error('Database connection failed: ' + err.stack);
-    return;
-  }
-  console.log('Connected to MySQL Database');
-});
+    if (err) {
+      console.error('Database connection failed:', err);
+      setTimeout(() => db.connect(), 5000); // Retry connection after 5 sec
+    } else {
+      console.log('Connected to MySQL Database');
+    }
+  });
+  
+  // Handle MySQL disconnection
+  db.on('error', err => {
+    console.error('MySQL error', err);
+    if (err.code === 'PROTOCOL_CONNECTION_LOST') {
+      db.connect(); // Reconnect if the connection is lost
+    }
+  }); 
+
+  app.get('/', (req, res) => {
+    res.send('Welcome to the EduCase India Assignment!');
+  });
 
 // Add School API
 app.post('/addSchool', (req, res) => {
