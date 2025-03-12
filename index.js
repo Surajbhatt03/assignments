@@ -1,45 +1,12 @@
-require('dotenv').config();
 const express = require('express');
-const mysql = require('mysql2');
-const bodyParser = require('body-parser');
-
+const mysql = require('./db'); // Import MySQL connection
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
-//Connect to MySQL Database
-const db = mysql.createConnection({
-  host: process.env.DB_HOST, 
-  user: process.env.DB_USER,    
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
-
-// Reconnect on error
-db.connect(err => {
-    if (err) {
-      console.error('Database connection failed:', err);
-      setTimeout(() => db.connect(), 5000); // Retry connection after 5 sec
-    } else {
-      console.log('Connected to MySQL Database');
-    }
-  });
-  
-  // Handle MySQL disconnection
-  db.on('error', err => {
-    console.error('MySQL error', err);
-    if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-      db.connect(); // Reconnect if the connection is lost
-    }
-  }); 
-
-  app.get('/', (req, res) => {
+app.get('/', (req, res) => {
     res.send('Welcome to the EduCase India Assignment!');
   });
 
-// Add School API
 app.post('/addSchool', (req, res) => {
   const { name, address, latitude, longitude } = req.body;
 
@@ -47,62 +14,43 @@ app.post('/addSchool', (req, res) => {
     return res.status(400).json({ error: 'All fields are required' });
   }
 
-  const sql = 'INSERT INTO schools (name, address, latitude, longitude) VALUES (?, ?, ?, ?)';
-  db.query(sql, [name, address, latitude, longitude], (err, result) => {
+  const query = 'INSERT INTO schools (name, address, latitude, longitude) VALUES (?, ?, ?, ?)';
+  mysql.query(query, [name, address, latitude, longitude], (err, result) => {
     if (err) {
-      return res.status(500).json({ error: err.message });
+      console.error(' Error inserting data:', err);
+      return res.status(500).json({ error: 'Database error' });
     }
     res.status(201).json({ message: 'School added successfully', schoolId: result.insertId });
   });
 });
 
-const haversine = (lat1, lon1, lat2, lon2) => {
-    const R = 6371; // Radius of Earth in KM
-    const toRad = angle => (angle * Math.PI) / 180;
-    
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    
-    const a = 
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c; // Distance in KM
-  };
-  
-  //Updated API to sort schools by proximity
-  app.get('/listSchools', (req, res) => {
-    const { latitude, longitude } = req.query;
-  
-    if (!latitude || !longitude) {
-      return res.status(400).json({ error: "Latitude and Longitude are required" });
+app.get('/listSchools', (req, res) => {
+  const userLat = parseFloat(req.query.latitude);
+  const userLon = parseFloat(req.query.longitude);
+
+  if (!userLat || !userLon) {
+    return res.status(400).json({ error: 'Latitude and Longitude are required' });
+  }
+
+  const query = `
+    SELECT id, name, address, latitude, longitude, 
+    ( 6371 * acos( cos( radians(?) ) * cos( radians( latitude ) ) 
+    * cos( radians( longitude ) - radians(?) ) + sin( radians(?) ) 
+    * sin( radians( latitude ) ) ) ) AS distance 
+    FROM schools 
+    ORDER BY distance ASC
+  `;
+
+  mysql.query(query, [userLat, userLon, userLat], (err, results) => {
+    if (err) {
+      console.error('Error fetching data:', err);
+      return res.status(500).json({ error: 'Database error' });
     }
-  
-    const userLat = parseFloat(latitude);
-    const userLon = parseFloat(longitude);
-  
-    const sql = "SELECT * FROM schools";
-    db.query(sql, (err, results) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-  
-      // Calculate distance and sort schools
-      const sortedSchools = results.map(school => ({
-        ...school,
-        distance: haversine(userLat, userLon, school.latitude, school.longitude)
-      })).sort((a, b) => a.distance - b.distance); // Sort by distance
-  
-      res.json(sortedSchools);
-    });
+    res.json({ schools: results });
   });
-  
+});
 
-
-//Start Server
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
